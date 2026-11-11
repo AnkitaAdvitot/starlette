@@ -625,3 +625,48 @@ def test_cors_vary_origin_with_gzip(test_client_factory: TestClientFactory) -> N
         "Accept-Encoding",
         "Origin",
     }
+
+
+def test_cors_preflight_allows_empty_header_elements(test_client_factory: TestClientFactory) -> None:
+    def homepage(request: Request) -> None:
+        pass  # pragma: no cover
+
+    app = Starlette(
+        routes=[Route("/", endpoint=homepage)],
+        middleware=[
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["https://example.org"],
+                allow_headers=["X-Allowed-1", "X-Allowed-2"],
+            )
+        ],
+    )
+
+    client = test_client_factory(app)
+
+    # Trailing, leading, and intermediate empty comma-separated elements should be ignored per RFC 9110 §5.6.1.2
+    for raw_header in (
+        "X-Allowed-1, ",
+        ", X-Allowed-1",
+        "X-Allowed-1, , X-Allowed-2",
+        " , X-Allowed-1 , , X-Allowed-2, ",
+        ", , ",
+    ):
+        headers = {
+            "Origin": "https://example.org",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": raw_header,
+        }
+        response = client.options("/", headers=headers)
+        assert response.status_code == 200
+        assert response.text == "OK"
+
+    # Disallowed header alongside empty elements must still fail with 400
+    headers = {
+        "Origin": "https://example.org",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "X-Allowed-1, , X-Disallowed",
+    }
+    response = client.options("/", headers=headers)
+    assert response.status_code == 400
+    assert response.text == "Disallowed CORS headers"
